@@ -1,0 +1,117 @@
+# =====================================================================
+# OpenTofu / Terraform
+# El state puede contener secretos en texto plano (p. ej. la contrasena de RDS).
+# =====================================================================
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+tfplan
+*.tfplan
+# OJO: .terraform.lock.hcl SI se versiona (fija las versiones de los proveedores).
+
+# Artefactos de empaquetado (p. ej. zip de la Lambda generado por el provider archive)
+*.zip
+
+# =====================================================================
+# Secretos y credenciales
+# =====================================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.secret
+*.secrets
+secrets.*
+credentials
+credentials.json
+.aws/
+# Cuentas de servicio de Firebase / Google
+*firebase-adminsdk*.json
+*serviceAccount*.json
+*service-account*.json
+google-services.json
+GoogleService-Info.plist
+# Configuracion local de herramientas de IA
+.claude/settings.local.json
+.claude/*.local.*
+
+# =====================================================================
+# Archivos temporales de los spikes (contienen policies firmadas y tokens temporales)
+# =====================================================================
+post-data.json
+event-*.json
+msg*.json
+
+# =====================================================================
+# Backend: Java / Maven / Gradle
+# =====================================================================
+target/
+build/
+.gradle/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+*.war
+hs_err_pid*
+replay_pid*
+application-local.properties
+application-local.yml
+application-local.yaml
+
+# =====================================================================
+# Frontend: Node / Next.js
+# =====================================================================
+node_modules/
+.next/
+out/
+.vercel/
+.firebase/
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.env*.local
+
+# =====================================================================
+# Python (scripts / Lambda)
+# =====================================================================
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# =====================================================================
+# Logs y temporales
+# =====================================================================
+*.log
+*.tmp
+*.bak
+*.swp
+
+# =====================================================================
+# IDE y sistema operativo
+# =====================================================================
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini

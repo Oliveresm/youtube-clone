@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Spike 2 - Presigned POST</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 960px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 14px; vertical-align: top; }
+  .pass { color: #0a7a2f; font-weight: 600; }
+  .fail { color: #b00020; font-weight: 600; }
+  code { background: #f3f3f3; padding: 1px 4px; }
+  button { padding: 8px 16px; font-size: 15px; }
+</style>
+</head>
+<body>
+<h2>Spike 2: Presigned POST firmado a mano (Java) desde el navegador</h2>
+<p>Origen actual: <code id="origin"></code> (el CORS del bucket solo permite <code>http://localhost:3000</code>).</p>
+<button id="run">Ejecutar todos los escenarios</button>
+<p id="meta"></p>
+<table>
+  <thead><tr><th>Escenario</th><th>Descripcion</th><th>Esperado</th><th>HTTP</th><th>Detalle S3</th><th>Resultado</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<script>
+document.getElementById('origin').textContent = location.origin;
+
+function randomBlob(n) {
+  const parts = [];
+  for (let off = 0; off < n; off += 65536) {
+    const chunk = new Uint8Array(Math.min(65536, n - off));
+    crypto.getRandomValues(chunk);
+    parts.push(chunk);
+  }
+  return new Blob(parts, { type: 'video/mp4' });
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+async function runScenario(sc) {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(sc.fields)) fd.append(k, v);
+  fd.append('file', randomBlob(sc.fileBytes), 'test.mp4');   // 'file' SIEMPRE al final
+
+  let status = '-', detail = '', ok = false;
+  try {
+    const r = await fetch(sc.url, { method: 'POST', body: fd });
+    status = r.status;
+    const text = await r.text();
+    const code = (text.match(/<Code>(.*?)<\/Code>/) || [])[1];
+    const msg  = (text.match(/<Message>(.*?)<\/Message>/) || [])[1];
+    detail = code ? `${code}: ${msg || ''}` : (text.includes('<PostResponse>') ? 'PostResponse (subida OK)' : text.slice(0, 120));
+    ok = sc.expect === '201' ? r.status === 201 : r.status >= 400;
+  } catch (e) {
+    // fetch lanza TypeError si el navegador bloquea por CORS o falla la red
+    status = 'ERR';
+    detail = 'Fallo de red o CORS: ' + e.message;
+    ok = false;
+  }
+  return { status, detail, ok };
+}
+
+document.getElementById('run').addEventListener('click', async () => {
+  const rows = document.getElementById('rows');
+  rows.innerHTML = '';
+  const res = await fetch('post-data.json?_=' + Date.now());
+  const data = await res.json();
+  document.getElementById('meta').textContent = 'Policies generadas: ' + data.generatedAt + ' (validas 5 min; vuelve a correr Java si pasaron).';
+
+  for (const sc of data.scenarios) {
+    const r = await runScenario(sc);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><b>${esc(sc.name)}</b></td><td>${esc(sc.description)}</td>`
+      + `<td>${sc.expect === '201' ? '201 Created' : 'Rechazo (4xx)'}</td>`
+      + `<td>${esc(r.status)}</td><td>${esc(r.detail)}</td>`
+      + `<td class="${r.ok ? 'pass' : 'fail'}">${r.ok ? 'PASS' : 'FAIL'}</td>`;
+    rows.appendChild(tr);
+  }
+});
+</script>
+</body>
+</html>
