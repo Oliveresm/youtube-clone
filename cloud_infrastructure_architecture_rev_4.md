@@ -1,5 +1,7 @@
 # Cloud Infrastructure Architecture (Revision 4)
 
+This document is the single source of truth for **how** the system is built on AWS. `project_context_and_requirements_rev_4.md` says **what** the system must do; when both touch the same topic, this document wins.
+
 ## 1. Architectural Overview & Rationale
 This is a **Cost-Optimized Cloud-Native Architecture** (~$25-$30 USD/month), not strictly serverless: it runs one 24/7 container and one relational database. It uses Public Subnets with strict Security Groups (SGs) to avoid ~$35/month NAT Gateway charges, and compensates with tight IAM, lifecycle policies and cost controls.
 
@@ -7,11 +9,11 @@ This is a **Cost-Optimized Cloud-Native Architecture** (~$25-$30 USD/month), not
 Two independent OpenTofu stacks:
 
 * **`bootstrap` stack (applied once, never destroyed with the app):**
-  * S3 state bucket: versioning on, Block Public Access on, SSE-S3 encryption, bucket policy denying non-TLS access, access limited to the infra role and the human admin.
+  * S3 state bucket: versioning on, Block Public Access on, SSE-S3 encryption, and a bucket policy that denies non-TLS requests. Access is controlled through IAM only: do **not** add principal-based `Deny` statements (they can lock the admin out). The `infra` role receives its permissions on this bucket in its own IAM policy.
   * GitHub OIDC identity provider.
   * The two CI IAM roles (see section 7).
   * **AWS Budget** of $30 with email notifications at 80% and 100% (actual) plus a forecast alert, using the Budget's native email subscribers (no SNS topic needed). It lives here so cost protection is active before anything else is created and survives every destroy of the app.
-* **`main` stack:** everything else (VPC, ECS, RDS, S3 app buckets, CloudFront, pipeline). This is the stack that `tofu destroy` removes.
+* **`main` stack:** everything else (VPC, ECS, RDS, S3 app buckets, CloudFront, pipeline, alerts). This is the stack that `tofu destroy` removes.
 
 ## 3. Network & Compute Layer
 * **VPC & Subnets:**
@@ -40,7 +42,7 @@ Two independent OpenTofu stacks:
 ## 4. Storage, CDN, and Frontend Delivery
 * **S3 Buckets (all private, Block Public Access on, `force_destroy = true`):**
   * `frontend-hosting`: Next.js static export.
-  * `raw-videos`: Presigned POST uploads under `raw/{videoId}.mp4`. **CORS** allows `POST` from the frontend origin only. Lifecycle rule: delete objects after 7 days.
+  * `raw-videos`: Presigned POST uploads under `raw/{videoId}.mp4`. **CORS** allows `POST` only from the site origin: the CloudFront domain in production (taken from the distribution's domain name) and `http://localhost:3000` for local development. Lifecycle rule: delete objects after 7 days.
   * `processed-videos`: HLS output and thumbnails, stored under the prefix **`videos/{videoId}/`** so the CloudFront path `/videos/*` maps 1:1 to the bucket keys.
   * **Bucket policies for `frontend-hosting` and `processed-videos`:** allow the service principal `cloudfront.amazonaws.com` to `s3:GetObject` on `bucket/*` **and** `s3:ListBucket` on the bucket, with condition `StringEquals AWS:SourceArn = <distribution ARN>`. `ListBucket` makes a missing object return **404** instead of 403. Create the policy after the Block Public Access resource (`depends_on`) to avoid conflicting concurrent updates.
 * **Amazon CloudFront (single distribution, OAC for both S3 origins):**
@@ -56,7 +58,6 @@ Two independent OpenTofu stacks:
   * **`/videos/*` → `processed-videos`:**
     * Cache policy `Managed-CachingOptimized`.
     * Response Headers Policy with CORS (`GET`/`HEAD`/`OPTIONS`, `origin_override = true`) allowing only the **local development origin** (`http://localhost:3000`). In production the site and the videos share the CloudFront domain, so `hls.js` requests are same-origin and need no CORS; requests from any other origin receive no CORS header.
-    * Caching: long TTL for `.ts` segments; short TTL for `.m3u8` manifests.
 
 ## 5. Asynchronous Video Pipeline (Event-Driven)
 
@@ -78,14 +79,17 @@ The Lambda produces `PROCESSING_STARTED`. For MediaConvert events there are **tw
    * Calls MediaConvert `CreateJob` with **`ClientRequestToken = videoId`** (a duplicate S3 event cannot create a second job) and `UserMetadata.videoId`.
    * Sends `PROCESSING_STARTED` to SQS.
    * IAM: `s3:GetObject` on `raw/*`, `mediaconvert:CreateJob`, `sqs:SendMessage` on the queue, **`iam:PassRole`** restricted to the MediaConvert role.
-   * Failure handling: asynchronous invocation **OnFailure destination (or DLQ)** configured, with a CloudWatch alarm.
+   * Failure handling: asynchronous invocation **OnFailure destination (or DLQ)** configured, with a CloudWatch alarm that notifies the `alerts` topic (section 5.3).
 3. **MediaConvert:** few renditions (cost scales per rendition), outputs HLS to `s3://processed-videos/videos/{videoId}/` and extracts a thumbnail.
 4. **EventBridge rules (two):** each matches `source = aws.mediaconvert`, `detail-type = MediaConvert Job State Change`, `detail.status` = `COMPLETE` (or `ERROR`), and `detail.userMetadata.videoId` exists (`{"exists": true}`). Events without `videoId` or with other statuses (e.g. `PROGRESSING`) are not delivered. Target: the SQS queue, with the input transformer from 5.1.
-5. **SQS (Standard):** resource policy allows `events.amazonaws.com` `sqs:SendMessage` with condition `ArnEquals aws:SourceArn` listing **both rule ARNs**. Queue settings: `visibility_timeout_seconds` greater than the consumer's processing time (e.g. 60), long polling (`receive_wait_time_seconds = 20`). Attached **DLQ** via redrive policy (`maxReceiveCount` ~5; a message moves to the DLQ when it would be received more times than that). **CloudWatch Alarm** on the DLQ: `AWS/SQS` `ApproximateNumberOfMessagesVisible` > 0, period 60 s, `treat_missing_data = notBreaching`, action = SNS topic with an email subscription (the subscription must be confirmed from the email).
+5. **SQS (Standard):** resource policy allows `events.amazonaws.com` `sqs:SendMessage` with condition `ArnEquals aws:SourceArn` listing **both rule ARNs**. Queue settings: `visibility_timeout_seconds` greater than the consumer's processing time (e.g. 60), long polling (`receive_wait_time_seconds = 20`). Attached **DLQ** via redrive policy (`maxReceiveCount` ~5; a message moves to the DLQ when it would be received more times than that). **CloudWatch Alarm** on the DLQ: `AWS/SQS` `ApproximateNumberOfMessagesVisible` > 0, period 60 s, `treat_missing_data = notBreaching`, action = the `alerts` topic.
 6. **Consumer (Spring Boot `@SqsListener`):**
-   * Standard SQS is at-least-once and unordered, so the consumer is **idempotent** and applies **monotonic transitions** (see section 6).
+   * Standard SQS is at-least-once and unordered, so the consumer is **idempotent** and applies **monotonic transitions** (section 6).
    * Unknown `videoId`: log, acknowledge and discard (never retry into the DLQ).
 7. **Limbo recovery:** `@Scheduled` job marks videos stuck in `UPLOADING` or `PROCESSING` for more than 2 hours as `FAILED` using a **conditional UPDATE**, so two instances running during a rolling deploy are harmless. Marking `FAILED` also releases the user's quota reservation.
+
+### 5.3 Alerts
+One SNS topic `alerts` in the `main` stack with an email subscription (variable `alert_email`; the subscription must be confirmed from the email). It is used by the DLQ alarm and the Lambda failure alarm. The Budget does not use it (it has its own email notifications).
 
 ## 6. Video State Rules
 * Order: `UPLOADING` < `PROCESSING` < `READY`. `FAILED` is a side state.
@@ -97,15 +101,16 @@ The Lambda produces `PROCESSING_STARTED`. For MediaConvert events there are **tw
 * This makes `READY` arriving before `PROCESSING` (backend was down) harmless.
 
 ## 7. Infrastructure as Code & CI/CD
-* **Remote state:** S3 bucket from the `bootstrap` stack, OpenTofu 1.10+ native locking (`use_lockfile = true`), SSE-S3. The state holds plaintext generated secrets (RDS password), so the bucket is tightly restricted.
+* **Remote state:** one S3 bucket created by the `bootstrap` stack, OpenTofu 1.10+ native locking (`use_lockfile = true`), SSE-S3. State keys: `bootstrap/terraform.tfstate` and `main/terraform.tfstate`. The `bootstrap` stack starts with local state (never committed) and is migrated to the bucket once the bucket exists. The state holds plaintext generated secrets (RDS password), so the bucket is tightly restricted.
 * **Generated secrets:** RDS password is written to the state and to SSM Parameter Store (SecureString, default key) only. Outputs carrying secrets must be `sensitive = true`; never log or duplicate them.
-* **GitHub Actions via OIDC (no static keys), two roles:**
-  * **`app-deploy` role:** trust `sub = repo:Org/Repo:ref:refs/heads/main`, `aud = sts.amazonaws.com`. Permissions: ECR push, `ecs:RegisterTaskDefinition`, `ecs:UpdateService`, `iam:PassRole` only for the task and execution roles, S3 sync and CloudFront invalidation on the frontend bucket.
-  * **`infra` role:** trust `sub = repo:Org/Repo:environment:infra`, `aud = sts.amazonaws.com`. The GitHub Environment `infra` requires **manual approval**. Since `tofu apply` creates IAM resources, this role is effectively admin: the approval gate, a permissions boundary and the exact `sub` are the mitigations.
+* **GitHub Actions via OIDC (no static keys), two roles.** Repository: `Oliveresm/youtube-clone`. Both roles require `aud = sts.amazonaws.com`.
+  * **`app-deploy` role:** `sub = repo:Oliveresm/youtube-clone:ref:refs/heads/main`. Permissions: ECR push, `ecs:RegisterTaskDefinition`, `ecs:UpdateService`, `iam:PassRole` only for the task and execution roles, S3 sync and CloudFront invalidation on the frontend bucket.
+  * **`infra` role:** `sub = repo:Oliveresm/youtube-clone:environment:infra`. The GitHub Environment `infra` requires **manual approval**. Since `tofu apply` creates IAM resources, this role is effectively admin: the approval gate, a permissions boundary and the exact `sub` are the mitigations.
 * **Operational controls:** CloudWatch log retention 7 days; ECR lifecycle policy for untagged/old images.
 
-## 8. Identity & Security Notes
+## 8. Identity, Configuration & Security Notes
 * Spring Security Resource Server validates signature (Google JWKS), **issuer** (`https://securetoken.google.com/<project-id>`) and **audience** (`<project-id>`).
+* **Configuration vs secrets:** non-secret configuration (Firebase project ID, bucket names, queue URL, region) is passed as environment variables in the task definition. Secrets are stored in SSM Parameter Store and injected through the task definition's `secrets` field.
 * ECS uses **two roles**:
   * **Execution role** (used by ECS to start the task): ECR pull, CloudWatch Logs, and `ssm:GetParameters` on the app parameters, because secrets declared in the task definition's `secrets` field are resolved at task start by this role, not by the task role.
   * **Task role** (used by the application, least privilege): `s3:PutObject` on `raw-videos/raw/*` (needed for the presigned POST to be valid), and `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:GetQueueAttributes` on the pipeline queue.
