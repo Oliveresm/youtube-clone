@@ -35,8 +35,8 @@ Create the state bucket in `infra/bootstrap` with versioning, Block Public Acces
 *Done when:* `tofu plan` shows the bucket with all those settings and, after the user applies, they are visible in the console.
 
 **T1.2 AWS Budget.**
-$30 budget with SNS email alerts at 80% and 100% (actual) plus a forecast alert.
-*Done when:* the SNS confirmation email is received and the budget appears in the console.
+$30 budget with email notifications at 80% and 100% (actual) plus a forecast alert, using the Budget's native email subscribers (no SNS topic). The email address is a variable (`budget_email`), set in a non-committed `terraform.tfvars`.
+*Done when:* the budget appears in the console with the three notifications and the user's email listed as a subscriber.
 
 **T1.3 GitHub OIDC provider and CI roles.**
 OIDC provider; `app-deploy` role (`sub = repo:Oliveresm/youtube-clone:ref:refs/heads/main`) and `infra` role (`sub = repo:Oliveresm/youtube-clone:environment:infra`), both with `aud = sts.amazonaws.com`. Minimal permissions per the architecture document; permissions boundary on the `infra` role.

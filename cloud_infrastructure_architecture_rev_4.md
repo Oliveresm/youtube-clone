@@ -10,7 +10,7 @@ Two independent OpenTofu stacks:
   * S3 state bucket: versioning on, Block Public Access on, SSE-S3 encryption, bucket policy denying non-TLS access, access limited to the infra role and the human admin.
   * GitHub OIDC identity provider.
   * The two CI IAM roles (see section 7).
-  * **AWS Budget** with SNS email alerts at 80% and 100% of $30 (actual) plus a forecast alert. It lives here so cost protection is active before anything else is created and survives every destroy of the app.
+  * **AWS Budget** of $30 with email notifications at 80% and 100% (actual) plus a forecast alert, using the Budget's native email subscribers (no SNS topic needed). It lives here so cost protection is active before anything else is created and survives every destroy of the app.
 * **`main` stack:** everything else (VPC, ECS, RDS, S3 app buckets, CloudFront, pipeline). This is the stack that `tofu destroy` removes.
 
 ## 3. Network & Compute Layer

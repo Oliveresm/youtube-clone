@@ -62,7 +62,7 @@ The application is a video streaming platform using adaptive bitrate streaming (
 ## 4. Non-Functional & Operational Requirements
 
 ### 4.1 Cost Control
-* OpenTofu provisions an AWS Budget in the **`bootstrap` stack** with SNS email alerts at 80% and 100% of $30 (actual) plus a forecast alert, so it is active from day one and survives app destroys.
+* OpenTofu provisions an AWS Budget in the **`bootstrap` stack** with email notifications (native Budget subscribers, no SNS topic) at 80% and 100% of $30 (actual) plus a forecast alert, so it is active from day one and survives app destroys.
 * Fargate Spot only, single task. Brief downtime on Spot interruption is accepted; SQS prevents event loss.
 
 ### 4.2 Infrastructure Lifecycle (Clean Destroys)
