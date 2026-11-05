@@ -8,20 +8,20 @@ This file only orders the work. Rules are in `AGENTS.md`, design in `cloud_infra
 
 ---
 
-## Phase 1: Bootstrap stack (applied manually, once): NEXT
+## Phase 1: Bootstrap stack (applied manually, once): IN PROGRESS (T1.1 and T1.2 DONE; next T1.3)
 Prerequisites (user): the email address for budget alerts.
 
-**T1.1 State bucket.** In `infra/bootstrap`, manage the existing state bucket with the settings in arch §2, as the resource `aws_s3_bucket.state`, with `lifecycle { prevent_destroy = true }`. The bucket was created by hand, is empty, and is named `youtube-clone-<account-id>`: build the name from `aws_caller_identity` (no hardcoded account id). The user adopts it into the stack's state with `tofu import aws_s3_bucket.state <bucket-name>` before the plan; the agent does not run the import.
+**T1.1 State bucket: DONE.** In `infra/bootstrap`, manage the existing state bucket with the settings in arch §2, as the resource `aws_s3_bucket.state`, with `lifecycle { prevent_destroy = true }`. The bucket was created by hand, is empty, and is named `youtube-clone-<account-id>`: build the name from `aws_caller_identity` (no hardcoded account id). The user adopts it into the stack's state with `tofu import aws_s3_bucket.state <bucket-name>` before the plan; the agent does not run the import.
 *Done when:* after the import, `tofu plan` shows only in-place updates or creations for versioning, Block Public Access, SSE-S3 and the TLS-only policy, and no destroy or replacement of the bucket.
 
-**T1.2 AWS Budget.** The budget `youtube-clone-budget` ($30 monthly) already exists, created by hand in the console. Adopt it instead of creating another: manage it as `aws_budgets_budget.monthly` with the limit and notifications from arch §2. The user imports it first with `tofu import aws_budgets_budget.monthly <account-id>:youtube-clone-budget`; the agent does not run the import. The email is the variable `budget_email` (no default), set in a non-committed `terraform.tfvars`; provide `terraform.tfvars.example`.
+**T1.2 AWS Budget: DONE.** The budget `youtube-clone-budget` ($30 monthly) already exists, created by hand in the console. Adopt it instead of creating another: manage it as `aws_budgets_budget.monthly` with the limit and notifications from arch §2. The user imports it first with `tofu import aws_budgets_budget.monthly <account-id>:youtube-clone-budget`; the agent does not run the import. The email is the variable `budget_email` (no default), set in a non-committed `terraform.tfvars`; provide `terraform.tfvars.example`.
 *Done when:* after the import, `tofu plan` shows no destroy or replacement of the budget, and any in-place update only aligns it with arch §2 (three notifications, the user's email as subscriber).
 
-**T1.3 GitHub OIDC provider and CI roles.** As described in arch §7, with a permissions boundary on the `infra` role.
-*Done when:* a test workflow assumes each role from the right branch/environment and is denied from any other.
+**T1.3 GitHub OIDC provider and CI roles.** In `infra/bootstrap`, as decided in arch §7 (names, trust policies, permissions, boundary). The agent first proposes the design in Plan mode; the user reviews it before any code is written. Before the first plan the user checks that no GitHub OIDC provider already exists in the account (`aws iam list-open-id-connect-providers`).
+*Done when:* after the user applies, `aws iam get-role` shows both trust policies with the exact `aud` and `sub`, and the boundary is attached to `youtube-clone-infra`.
 
-**T1.4 GitHub Environment (user, in GitHub).** Create the `infra` environment with required manual approval.
-*Done when:* a workflow that uses it pauses for approval.
+**T1.4 GitHub Environment and OIDC test.** The user creates the `infra` environment in GitHub with required reviewers. The agent adds a test workflow `.github/workflows/oidc-test.yml` that assumes `youtube-clone-app-deploy` from `main`, and `youtube-clone-infra` from the `infra` environment (after approval), and only prints `aws sts get-caller-identity`. Role ARNs are built from a repository variable for the account id (not hardcoded), and the job needs `permissions: id-token: write`.
+*Done when:* both roles are assumed from the right context, the approval pause appears for `infra`, and assuming either role from another branch is denied.
 
 **T1.5 Bootstrap state location.** Migrate the bootstrap state to the bucket (arch §7) with `tofu init -migrate-state`. The `main` stack is configured against the same bucket.
 *Done when:* both stacks initialize against the bucket and no `terraform.tfstate` remains in the working tree.
