@@ -24,7 +24,7 @@ These are intentionally open. Do not make these decisions on your own:
 When these get defined they will live in `docs/` and this section will be updated.
 
 ## Hard rules
-* **Never run commands that create, change or delete AWS resources** (`tofu apply`, `tofu destroy`, `aws ... create/delete/put/update`, etc.). Allowed: `tofu init`, `tofu fmt`, `tofu validate`, `tofu plan`, and read-only AWS CLI commands (`describe`/`list`/`get`, `sts get-caller-identity`). Show the plan summary and let the user apply.
+* **Never run commands that create, change or delete AWS resources** (`tofu apply`, `tofu destroy`, `aws ... create/delete/put/update`, etc.). Allowed: `tofu init`, `tofu fmt`, `tofu validate`, `tofu plan`, and read-only AWS CLI commands (`describe`/`list`/`get`, `sts get-caller-identity`). Show the plan summary and let the user apply. **No exceptions**: not even if the user asks in chat or it seems necessary to finish the task. If an apply, import or destroy is needed, stop and give the user the exact command to run themselves.
 * **Never commit secrets**: no AWS keys, `.tfvars` with real values, `.env`, Firebase service accounts, state files. No static IAM keys anywhere. Provide `*.tfvars.example` files without real values.
 * Do not touch the state bucket or any state file except through the planned bootstrap tasks.
 * Do not add services, features or dependencies that are not described in the documents.

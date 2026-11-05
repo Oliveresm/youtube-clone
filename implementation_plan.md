@@ -11,11 +11,11 @@ This file only orders the work. Rules are in `AGENTS.md`, design in `cloud_infra
 ## Phase 1: Bootstrap stack (applied manually, once): NEXT
 Prerequisites (user): the email address for budget alerts.
 
-**T1.1 State bucket.** In `infra/bootstrap`, create the state bucket as described in arch §2 (suggested name `youtube-clone-tfstate-<account-id>`, account id from `aws_caller_identity`). The bucket created by hand earlier (`youtube-clone-403732031115`) is empty and must not be touched by the agent; the user deletes it.
-*Done when:* `tofu plan` shows only creations, with versioning, Block Public Access, SSE-S3 and the TLS-only policy.
+**T1.1 State bucket.** In `infra/bootstrap`, manage the existing state bucket with the settings in arch §2, as the resource `aws_s3_bucket.state`, with `lifecycle { prevent_destroy = true }`. The bucket was created by hand, is empty, and is named `youtube-clone-<account-id>`: build the name from `aws_caller_identity` (no hardcoded account id). The user adopts it into the stack's state with `tofu import aws_s3_bucket.state <bucket-name>` before the plan; the agent does not run the import.
+*Done when:* after the import, `tofu plan` shows only in-place updates or creations for versioning, Block Public Access, SSE-S3 and the TLS-only policy, and no destroy or replacement of the bucket.
 
-**T1.2 AWS Budget.** As described in arch §2. The email is the variable `budget_email` (no default), set in a non-committed `terraform.tfvars`; provide `terraform.tfvars.example`.
-*Done when:* the plan shows the budget with the three notifications and the user's email as subscriber.
+**T1.2 AWS Budget.** The budget `youtube-clone-budget` ($30 monthly) already exists, created by hand in the console. Adopt it instead of creating another: manage it as `aws_budgets_budget.monthly` with the limit and notifications from arch §2. The user imports it first with `tofu import aws_budgets_budget.monthly <account-id>:youtube-clone-budget`; the agent does not run the import. The email is the variable `budget_email` (no default), set in a non-committed `terraform.tfvars`; provide `terraform.tfvars.example`.
+*Done when:* after the import, `tofu plan` shows no destroy or replacement of the budget, and any in-place update only aligns it with arch §2 (three notifications, the user's email as subscriber).
 
 **T1.3 GitHub OIDC provider and CI roles.** As described in arch §7, with a permissions boundary on the `infra` role.
 *Done when:* a test workflow assumes each role from the right branch/environment and is denied from any other.
